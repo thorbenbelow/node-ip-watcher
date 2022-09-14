@@ -3,17 +3,38 @@ extern crate pnet_datalink;
 use pnet_datalink::interfaces;
 use std::env;
 use std::io::Write;
+use std::net::IpAddr;
 use std::process::{Command, Stdio};
 
-fn main() {
-    let device = env::var("NODE_IP_NETWORK_DEVICE").unwrap();
+#[derive(Debug)]
+enum Error {
+    DeviceNotFoundError,
+    InterfaceNotFoundError,
+    IpNotFoundError,
+    IpParseError
+}
+
+fn get_machine_ip() -> Result<IpAddr, Error>{
+    let device = env::var("NODE_IP_NETWORK_DEVICE").map_err(|_| Error::DeviceNotFoundError)?;
 
     let ifaces = interfaces();
-    let iface = ifaces.iter().find(|e| e.name == device).unwrap();
+    let iface = ifaces
+        .iter()
+        .find(|e| e.name == device)
+        .ok_or(Error::InterfaceNotFoundError)?;
+    
+    let network = iface
+        .ips
+        .iter()
+        .find(|e| e.is_ipv6() && e.prefix() == 128)
+        .ok_or(Error::IpNotFoundError)?;
 
-    if let Some(ip) = iface.ips.iter().find(|e| e.is_ipv6() && e.prefix() == 128) {
-        println!("Current machine ip {:?}", ip.ip());
-        let get_traefik_ip = Command::new("kubectl")
+    Ok(network.ip())
+}
+
+fn get_traefik_ips() -> Result<Vec<String>, Error> {
+
+    let get_traefik = Command::new("kubectl")
             .args([
                 "get",
                 "svc",
@@ -22,14 +43,26 @@ fn main() {
                 "kube-system",
                 "-o=go-template={{range .status.loadBalancer.ingress}}{{printf \"%s\\n\" .ip}}{{end}}"
             ]).output().unwrap();
+            Ok(get_traefik.stdout
+                .split(|c| *c == b'\n')
+                .map(|line|
+                    if let OK(ip) = String::from_utf8(line.to_vec()) {
+                        ip
+                    }else {
+                        
+                    }
+                )
+                .collect::<Vec<_>>()
+            )
+}
 
-        let traefik_ips = String::from_utf8(get_traefik_ip.stdout).unwrap();
-
-        if !traefik_ips
-            .lines()
-            .any(|item| item == format!("{:?}", ip.ip()))
-        {
-            println!("{:?}", ip.ip());
+fn main() {
+    if let Ok(ip) = get_machine_ip() {
+        println!("Current machine ip {:?}", ip);
+        
+        let traefik_ips = get_traefik_ips().unwrap();
+        if !traefik_ips.iter().any(|item| *item == format!("{:?}", ip)) {
+            println!("{:?}", ip);
             Command::new("/usr/local/bin/k3s-killall.sh").spawn();
             let k3s_script = Command::new("curl")
                 .args(["-sfL", "https://get.k3s.io"])
@@ -41,7 +74,7 @@ fn main() {
                     "-s",
                     "server",
                     "--node-ip",
-                    &format!("192.168.0.2,{}", ip.ip()),
+                    &format!("192.168.0.2,{}", ip),
                     "--cluster-cidr",
                     "10.42.0.0/16,2001:cafe:42:0::/56",
                     "--service-cidr",
@@ -63,8 +96,6 @@ fn main() {
                 .args(["restart", "k3s"])
                 .spawn()
                 .unwrap();
-
-            // todo: change AAAA entries
         } else {
             println!("{:?}", "nothing to do");
         }
