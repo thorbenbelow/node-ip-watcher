@@ -1,14 +1,14 @@
 extern crate pnet_datalink;
 
+use clap::Parser;
+
 use pnet_datalink::interfaces;
-use std::env;
 use std::io::Write;
 use std::net::IpAddr;
 use std::process::{Command, Stdio};
 
 #[derive(Debug)]
 enum Error {
-    DeviceNotFoundError,
     InterfaceNotFoundError,
     IpNotFoundError,
     KubectlError,
@@ -100,9 +100,20 @@ fn restart_k3s(ip: String) -> Result<(), Error> {
     Ok(())
 }
 
+/// Simple program to sync k3s and node ip
+#[derive(Parser, Debug)]
+#[command(author, version, about, long_about = None)]
+struct Args {
+    /// Name of network device to sync k3s with
+   #[arg(short, long)]
+   device: String,
+}
+
 fn main() {
-    let device = env::var("NODE_IP_NETWORK_DEVICE").map_err(|_| Error::DeviceNotFoundError).expect("Device not found");
-    let machine_ip = get_machine_ip(&device).expect("No machine ip");
+
+    let args = Args::parse();
+
+    let machine_ip = get_machine_ip(&args.device).expect("No machine ip");
     println!("Current machine ip {:?}", machine_ip);
     let traefik_ips = get_traefik_ips().expect("Failed to extract traefik ips");
 
