@@ -12,19 +12,17 @@ enum Error {
     InterfaceNotFoundError,
     IpNotFoundError,
     KubectlError,
-    TodoError
+    TodoError,
 }
 
-
-fn get_machine_ip() -> Result<IpAddr, Error>{
-    let device = env::var("NODE_IP_NETWORK_DEVICE").map_err(|_| Error::DeviceNotFoundError)?;
+fn get_machine_ip(device: &str) -> Result<IpAddr, Error> {
 
     let ifaces = interfaces();
     let iface = ifaces
         .iter()
         .find(|e| e.name == device)
         .ok_or(Error::InterfaceNotFoundError)?;
-    
+
     let network = iface
         .ips
         .iter()
@@ -35,41 +33,41 @@ fn get_machine_ip() -> Result<IpAddr, Error>{
 }
 
 fn get_traefik_ips() -> Result<Vec<String>, Error> {
-
     let get_traefik = Command::new("kubectl")
-            .args([
-                "get",
-                "svc",
-                "traefik",
-                "-n",
-                "kube-system",
-                "-o=go-template={{range .status.loadBalancer.ingress}}{{printf \"%s\\n\" .ip}}{{end}}"
-            ])
-            .output()
-            .map_err(|_|Error::KubectlError)?;
-            
-            Ok(get_traefik.stdout
-                .split(|c| *c == b'\n')
-                .filter_map(|line|
-                    String::from_utf8(line.to_vec()).ok()
-                )
-                .collect::<Vec<_>>()
-            )
+        .args([
+            "get",
+            "svc",
+            "traefik",
+            "-n",
+            "kube-system",
+            "-o=go-template={{range .status.loadBalancer.ingress}}{{printf \"%s\\n\" .ip}}{{end}}",
+        ])
+        .output()
+        .map_err(|_| Error::KubectlError)?;
+
+    Ok(get_traefik
+        .stdout
+        .split(|c| *c == b'\n')
+        .filter_map(|line| String::from_utf8(line.to_vec()).ok())
+        .collect::<Vec<_>>())
 }
 
 fn kill_current_workloads() -> Result<std::process::Child, Error> {
-    Command::new("/usr/local/bin/k3s-killall.sh").spawn().map_err(|_|Error::TodoError)
+    Command::new("/usr/local/bin/k3s-killall.sh")
+        .spawn()
+        .map_err(|_| Error::TodoError)
 }
 
 fn get_k3s_script() -> Result<std::process::Output, Error> {
     Command::new("curl")
-            .args(["-sfL", "https://get.k3s.io"])
-            .output().map_err(|_|Error::TodoError)
+        .args(["-sfL", "https://get.k3s.io"])
+        .output()
+        .map_err(|_| Error::TodoError)
 }
 
 fn restart_k3s(ip: String) -> Result<(), Error> {
     kill_current_workloads()?;
-        
+
     let k3s_script = get_k3s_script()?;
 
     let k3s = match Command::new("sh")
@@ -91,18 +89,20 @@ fn restart_k3s(ip: String) -> Result<(), Error> {
     };
 
     let mut k3s = k3s.stdin.ok_or(Error::TodoError)?;
-    k3s.write_all(&k3s_script.stdout).map_err(|_|Error::TodoError)?;
+    k3s.write_all(&k3s_script.stdout)
+        .map_err(|_| Error::TodoError)?;
 
     Command::new("systemctl")
         .args(["restart", "k3s"])
-        .spawn().map_err(|_|Error::TodoError)?;
+        .spawn()
+        .map_err(|_| Error::TodoError)?;
 
     Ok(())
-
 }
 
 fn main() {
-    let machine_ip = get_machine_ip().expect("No machine ip");
+    let device = env::var("NODE_IP_NETWORK_DEVICE").map_err(|_| Error::DeviceNotFoundError).expect("Device not found");
+    let machine_ip = get_machine_ip(&device).expect("No machine ip");
     println!("Current machine ip {:?}", machine_ip);
     let traefik_ips = get_traefik_ips().expect("Failed to extract traefik ips");
 
